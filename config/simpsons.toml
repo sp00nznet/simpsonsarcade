@@ -8,17 +8,17 @@ out_directory_path = "../ppc"
 switch_table_file_path = "simpsons_switch_tables.toml"
 
 # ABI Register Save/Restore Addresses
-# TODO: Find by scanning the XEX binary with tools/find_abi_addrs.py
-savegprlr_14_address = 0x00000000
-restgprlr_14_address = 0x00000000
-savefpr_14_address = 0x00000000
-restfpr_14_address = 0x00000000
-savevmx_14_address = 0x00000000
-restvmx_14_address = 0x00000000
-savevmx_64_address = 0x00000000
-restvmx_64_address = 0x00000000
+# Found by scanning PE image with tools/find_abi_addrs.py
+savegprlr_14_address = 0x8225D390
+restgprlr_14_address = 0x8225D3E0
+savefpr_14_address = 0x8225E270
+restfpr_14_address = 0x8225E2BC
+savevmx_14_address = 0x8225E6C0
+restvmx_14_address = 0x8225E958
+savevmx_64_address = 0x8225E754
+restvmx_64_address = 0x8225E9EC
 
-# setjmp/longjmp - TODO: scan binary
+# setjmp/longjmp - not found in this game binary
 # longjmp_address = 0x00000000
 # setjmp_address = 0x00000000
 

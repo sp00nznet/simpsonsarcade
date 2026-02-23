@@ -60,12 +60,22 @@ def extract_live_pirs(input_path, output_dir):
         print(f"Data start: 0x{start:X}")
         print(f"Hash table offset: 0x{offset:X}")
 
-        infile.seek(start + 0x2F)
-        firstclust = struct.unpack("<H", infile.read(2))[0]
-        print(f"First cluster (file table size in blocks): {firstclust}")
-
+        # Determine file table size: scan entries until name_len == 0.
+        # Read generously (up to 16 blocks) and trim to actual entries.
         infile.seek(start)
-        ft_data = infile.read(0x1000 * firstclust)
+        ft_data = infile.read(0x1000 * 16)
+        # Count valid entries to find actual table size
+        _num = len(ft_data) // 64
+        _actual = 0
+        for _j in range(_num):
+            if (ft_data[_j * 64 + 40] & 0x3F) == 0:
+                break
+            _actual = _j + 1
+        firstclust = (_actual * 64 + 0xFFF) // 0x1000
+        if firstclust < 1:
+            firstclust = 1
+        ft_data = ft_data[:0x1000 * firstclust]
+        print(f"File table entries: {_actual}, blocks: {firstclust}")
 
         paths = {0xFFFF: ""}
 

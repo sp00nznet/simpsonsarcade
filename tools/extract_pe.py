@@ -7,6 +7,7 @@ Based on XenonRecomp's XEX loading implementation (XenonUtils/xex.cpp).
 Usage: python extract_pe.py <input.xex> <output.bin>
 """
 
+import math
 import struct
 import sys
 
@@ -18,6 +19,8 @@ except ImportError:
     except ImportError:
         print("ERROR: pycryptodome is required. Install with: pip install pycryptodome")
         sys.exit(1)
+
+from lzx_decompress import LZXDecoder
 
 
 XEX2_RETAIL_KEY = bytes([
@@ -146,6 +149,79 @@ def decrypt_xex2(xex_path, output_path):
             dst_pos += zs
 
         print(f"  Decompressed to {dst_pos} bytes")
+        final_image = bytes(pe_image[:image_size])
+    elif comp_type == 2:
+        print("\nDecompressing normal (LZX) blocks...")
+        # Normal compression FFI layout:
+        #   +0x00: info_size (4 BE)
+        #   +0x04: enc_type (2 BE)
+        #   +0x06: comp_type (2 BE)
+        #   +0x08: window_size (4 BE)       <-- LZX window size
+        #   +0x0C: first block descriptor:
+        #          data_size (4 BE) + sha1_hash (20 bytes) = 24 bytes
+        window_size = read_be32(data, ffi_offset + 8)
+        window_bits = int(math.log2(window_size)) if window_size > 0 else 15
+        first_block_size = read_be32(data, ffi_offset + 0x0C)
+
+        print(f"  Window size: 0x{window_size:X} ({window_bits} bits)")
+        print(f"  First block data size: 0x{first_block_size:X}")
+
+        # Accumulate all LZX compressed data from all XEX blocks.
+        # Each XEX block starts with a 24-byte descriptor for the NEXT block
+        # (4 bytes data_size + 20 bytes SHA1 hash), followed by chunks.
+        # Each chunk has a 2-byte BE compressed_size header followed by
+        # compressed_size bytes of compressed data. A chunk_size of 0
+        # signals the end of chunks in that block.
+        compress_buffer = bytearray()
+        src_pos = 0
+        current_block_size = first_block_size
+        block_num = 0
+
+        while current_block_size != 0:
+            block_num += 1
+            block_start = src_pos
+
+            if src_pos + 24 > len(decrypted_data):
+                print(f"  WARNING: Block {block_num} truncated at descriptor")
+                break
+
+            next_block_size = read_be32(decrypted_data, src_pos)
+            src_pos += 24  # skip descriptor (4 size + 20 hash)
+
+            block_data_end = block_start + current_block_size
+            chunk_count = 0
+
+            while src_pos < block_data_end:
+                if src_pos + 2 > block_data_end:
+                    break
+                chunk_size = read_be16(decrypted_data, src_pos)
+                src_pos += 2
+                if chunk_size == 0:
+                    break
+                compress_buffer.extend(
+                    decrypted_data[src_pos:src_pos + chunk_size])
+                src_pos += chunk_size
+                chunk_count += 1
+
+            print(f"  Block {block_num}: {chunk_count} chunks, "
+                  f"data_size=0x{current_block_size:X}")
+
+            src_pos = block_start + current_block_size
+            current_block_size = next_block_size
+
+        print(f"  Total compressed data: {len(compress_buffer)} bytes")
+
+        # Decompress the entire concatenated LZX stream at once
+        decoder = LZXDecoder(window_bits)
+        try:
+            pe_image = decoder.decompress(bytes(compress_buffer), image_size)
+            print(f"  Decompressed: 0x{len(pe_image):X} bytes")
+        except Exception as e:
+            print(f"  ERROR during LZX decompression: {e}")
+            import traceback
+            traceback.print_exc()
+            pe_image = b'\x00' * image_size
+
         final_image = bytes(pe_image[:image_size])
     elif comp_type == 0:
         final_image = decrypted_data[:image_size]

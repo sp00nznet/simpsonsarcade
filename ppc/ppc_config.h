@@ -6,11 +6,11 @@
 #include <cstdlib>
 #include <cstdint>
 
-// TODO: Fill in after PE image analysis with tools/find_abi_addrs.py
+// PE image layout (from analysis of default.xex)
 #define PPC_IMAGE_BASE 0x82000000ull
-#define PPC_IMAGE_SIZE 0x0ull
-#define PPC_CODE_BASE 0x82000000ull
-#define PPC_CODE_SIZE 0x0ull
+#define PPC_IMAGE_SIZE 0x3E0000ull
+#define PPC_CODE_BASE 0x820A0000ull
+#define PPC_CODE_SIZE 0x237350ull
 
 // Counter for NULL indirect calls (defined in main.cpp)
 extern uint64_t g_null_icall_count;
