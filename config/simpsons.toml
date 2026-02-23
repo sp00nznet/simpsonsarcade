@@ -1,0 +1,39 @@
+# The Simpsons Arcade - XenonRecomp Configuration
+# Title ID: 0x584111FA
+# Generated: 2026-02-23
+
+[main]
+file_path = "../extracted/default.xex"
+out_directory_path = "../ppc"
+switch_table_file_path = "simpsons_switch_tables.toml"
+
+# ABI Register Save/Restore Addresses
+# TODO: Find by scanning the XEX binary with tools/find_abi_addrs.py
+savegprlr_14_address = 0x00000000
+restgprlr_14_address = 0x00000000
+savefpr_14_address = 0x00000000
+restfpr_14_address = 0x00000000
+savevmx_14_address = 0x00000000
+restvmx_14_address = 0x00000000
+savevmx_64_address = 0x00000000
+restvmx_64_address = 0x00000000
+
+# setjmp/longjmp - TODO: scan binary
+# longjmp_address = 0x00000000
+# setjmp_address = 0x00000000
+
+# Manual function definitions to fix switch case boundary errors.
+# TODO: Add after running XenonRecomp and analyzing errors
+functions = []
+
+[optimizations]
+# All optimizations DISABLED for initial recompilation pass
+# Enable these ONLY after basic recompilation works correctly
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+reserved_as_local = false
+cr_as_local = false
+non_argument_as_local = false
+non_volatile_as_local = false

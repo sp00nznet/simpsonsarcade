@@ -1,0 +1,17 @@
+# XenonRecomp Altivec/VMX instruction patches
+#
+# TODO: Copy patches from the vig8 project if the same instruction support
+# is needed, or generate new patches specific to The Simpsons Arcade binary.
+#
+# The vig8 project required adding 30+ missing Altivec/VMX instruction handlers
+# to XenonRecomp. The Simpsons Arcade may require the same or different patches
+# depending on what instructions its code uses.
+#
+# Key instruction categories that may need patching:
+# - Vector saturating arithmetic (vaddsbs, vaddsws, vsubsbs, vsubshs)
+# - Vector shifts (vslh, vsrh, vsrah, vsrab, vrlh)
+# - Vector compare (vcmpequh, vcmpgtsh, vcmpgtsw with RC bit)
+# - Vector pack (vpkshss, vpkswss, vpkswus, vpkuhus + 128-bit variants)
+# - Vector misc (vmaxsh, vminsh, vavguh, vspltish, vslo, vnor)
+# - Float conversion (vcfpuxws128)
+# - CR bit ops (cror, crorc)
