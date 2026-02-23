@@ -1,0 +1,24 @@
+# The Simpsons Arcade - ReXGlue Configuration
+# Migrated from XenonRecomp config
+
+project_name = "simpsons"
+file_path = "../extracted/default.xex"
+out_directory_path = "../generated"
+
+# Code generation options (conservative - all disabled for initial pass)
+skip_lr = false
+skip_msr = false
+ctr_as_local = false
+xer_as_local = false
+cr_as_local = false
+reserved_as_local = false
+non_argument_as_local = false
+non_volatile_as_local = false
+generate_exception_handlers = false
+
+[analysis]
+max_jump_extension = 65536
+
+# Manual function overrides
+# TODO: Add after analyzing XEX binary
+[functions]
