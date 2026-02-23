@@ -24,58 +24,70 @@
 ```bash
 git clone --recursive https://github.com/hedge-dev/XenonRecomp.git tools/XenonRecomp
 cd tools/XenonRecomp
-mkdir build && cd build
-cmake ..
-cmake --build . --config Release
+
+# Apply required patches
+git apply ../patches/xenonrecomp-altivec-vmx.patch
+git apply ../patches/xenonrecomp-missing-instructions.patch
+
+# Build (requires MSVC environment for vcvarsall + clang-cl)
+# On Windows, use a batch script:
+# call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" amd64
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="C:/Program Files/LLVM/bin/clang-cl.exe" \
+  -DCMAKE_CXX_COMPILER="C:/Program Files/LLVM/bin/clang-cl.exe" \
+  -DCMAKE_CXX_STANDARD=20
+cmake --build build --config Release
 ```
 
-**Requirements:** CMake 3.20+, Clang 18+, C++17
+**Requirements:** CMake 3.20+, Clang 18+ (clang-cl), MSVC 2022+, Ninja
 
-### Step 2: Run XenonAnalyse
+**Patches:**
+- `xenonrecomp-altivec-vmx.patch` — Adds 30+ missing Altivec/VMX instruction handlers
+- `xenonrecomp-missing-instructions.patch` — Adds 21 missing PPC instructions needed by this game:
+  - Update-form loads: lhzu, lhau, lbzux, lhzux, lwzux, ldux, lfsu, lfsux, lfdu
+  - Update-form stores: sthu, sthux, stbux, stdux, stfsu, stfdu
+  - Conditional branches: bdzf, bdnzt
+  - Integer arithmetic: addc, addme, subfze
+  - Vector: lvehx
+
+### Step 2: Extract Game Files
 
 ```bash
-XenonAnalyse "../extracted/default.xex" config/simpsons_switch_tables.toml
+# Extract STFS container
+python tools/extract_stfs.py
+
+# Extract PE from XEX2 (handles LZX decompression)
+python tools/extract_pe.py extracted/default.xex extracted/pe_image.bin
 ```
 
-### Step 3: Locate ABI Addresses
+### Step 3: Run XenonAnalyse
 
-Use `tools/find_abi_addrs.py` to scan the PE image for standard PowerPC ABI register save/restore functions.
-
-### Step 4: Create TOML Configuration
-
-```toml
-[main]
-file_path = "../extracted/default.xex"
-out_directory_path = "../ppc"
-switch_table_file_path = "simpsons_switch_tables.toml"
-
-# ABI addresses (MUST be found in the actual binary)
-savegprlr_14_address = 0x00000000  # TODO: find
-restgprlr_14_address = 0x00000000  # TODO: find
-savefpr_14_address = 0x00000000    # TODO: find
-restfpr_14_address = 0x00000000    # TODO: find
-savevmx_14_address = 0x00000000   # TODO: find
-restvmx_14_address = 0x00000000   # TODO: find
-savevmx_64_address = 0x00000000   # TODO: find
-restvmx_64_address = 0x00000000   # TODO: find
-
-[optimizations]
-skip_lr = false
-skip_msr = false
-ctr_as_local = false
-xer_as_local = false
-reserved_as_local = false
-cr_as_local = false
-non_argument_as_local = false
-non_volatile_as_local = false
+```bash
+cd config
+../tools/XenonRecomp/build/XenonAnalyse/XenonAnalyse.exe ../extracted/default.xex simpsons_switch_tables.toml
 ```
+
+### Step 4: Locate ABI Addresses
+
+```bash
+python tools/find_abi_addrs.py extracted/pe_image.bin
+```
+
+Results for this game (already in config/simpsons.toml):
+- savegprlr_14 = 0x8225D390, restgprlr_14 = 0x8225D3E0
+- savefpr_14 = 0x8225E270, restfpr_14 = 0x8225E2BC
+- savevmx_14 = 0x8225E6C0, restvmx_14 = 0x8225E958
+- savevmx_64 = 0x8225E754, restvmx_64 = 0x8225E9EC
 
 ### Step 5: Run XenonRecomp
 
 ```bash
-mkdir -p ppc
-XenonRecomp config/simpsons.toml tools/XenonRecomp/XenonUtils/ppc_context.h
+cd config
+../tools/XenonRecomp/build/XenonRecomp/XenonRecomp.exe simpsons.toml \
+  ../tools/XenonRecomp/XenonUtils/ppc_context.h
 ```
+
+**Output:** 59 source files (~45MB) with 15,237 recompiled functions in `ppc/`
 
 ### Step 6: Build Runtime (The Hard Part)
 

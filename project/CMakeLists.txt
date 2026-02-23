@@ -45,6 +45,7 @@ endif()
 
 target_include_directories(simpsons PRIVATE
     ${CMAKE_SOURCE_DIR}/../generated
+    ${CMAKE_SOURCE_DIR}/../ppc
 )
 
 target_link_libraries(simpsons PRIVATE
@@ -54,6 +55,8 @@ target_link_libraries(simpsons PRIVATE
     rex::graphics
     rex::ui
 )
+
+target_compile_definitions(simpsons PRIVATE PPC_INCLUDE_DETAIL)
 
 target_compile_options(simpsons PRIVATE
     -fno-strict-aliasing
@@ -77,6 +80,7 @@ add_executable(simpsons_test
 )
 target_include_directories(simpsons_test PRIVATE
     ${CMAKE_SOURCE_DIR}/../generated
+    ${CMAKE_SOURCE_DIR}/../ppc
 )
 target_link_libraries(simpsons_test PRIVATE
     rex::core
@@ -85,6 +89,8 @@ target_link_libraries(simpsons_test PRIVATE
     rex::graphics
     rex::ui
 )
+target_compile_definitions(simpsons_test PRIVATE PPC_INCLUDE_DETAIL)
+
 target_compile_options(simpsons_test PRIVATE
     -fno-strict-aliasing
     -ffp-model=strict

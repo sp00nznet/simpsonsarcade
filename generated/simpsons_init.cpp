@@ -1,10 +1,9 @@
 //=============================================================================
-// ReXGlue Generated - The Simpsons Arcade Function Mapping Table
-// TODO: Run rexglue codegen to populate this file
+// The Simpsons Arcade - Initialization
+// Links generated PPC recompilation with the ReXGlue runtime.
 //=============================================================================
 
 #include "simpsons_init.h"
 
-PPCFuncMapping PPCFuncMappings[] = {
-    { 0, nullptr },  // sentinel
-};
+// PPCFuncMappings[] is defined in ppc/ppc_func_mapping.cpp
+// (included via sources.cmake)
