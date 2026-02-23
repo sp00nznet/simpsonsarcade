@@ -38,8 +38,14 @@ tools/rexglue-sdk/
 # Build output directories
 project/out/
 
-# Crash logs (debug artifacts)
+# Crash/debug logs
 crash_log*.txt
+*_crash.log
+*_stderr.log
+
+# Runtime settings (user-specific)
+simpsons_settings.toml
+run.bat
 
 # IDE / editor
 .vs/
@@ -56,6 +62,10 @@ Desktop.ini
 
 # Recompilation logs (reproducible)
 *.log
+
+# Python cache
+__pycache__/
+tools/__pycache__/
 
 # Claude Code local settings
 .claude/
