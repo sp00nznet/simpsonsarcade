@@ -79,9 +79,11 @@ static struct StderrRedirect_ {
     }
 } g_stderr_redirect_;
 
+// VEH handler: log ALL crashes/exceptions (runs on any thread)
 static LONG CALLBACK CrashVEH(EXCEPTION_POINTERS* ep) {
     auto* ctx = ep->ContextRecord;
     auto* rec = ep->ExceptionRecord;
+    // Skip breakpoints and single-step (debugger noise)
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT ||
         rec->ExceptionCode == EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
     crash_log_write("\n========== EXCEPTION ==========\n");
@@ -93,19 +95,50 @@ static LONG CALLBACK CrashVEH(EXCEPTION_POINTERS* ep) {
                 (unsigned long long)rec->ExceptionInformation[1],
                 rec->ExceptionInformation[0] == 0 ? "READ" : "WRITE");
     }
+    if (rec->ExceptionCode == 0xE06D7363) {
+        crash_log_write("*** C++ EXCEPTION (throw) ***\n");
+        // Try to extract exception message from MSVC exception info
+        if (rec->NumberParameters >= 3 && rec->ExceptionInformation[0] == 0x19930520) {
+            __try {
+                std::exception* ex = reinterpret_cast<std::exception*>(rec->ExceptionInformation[1]);
+                if (ex) {
+                    crash_log_write("what(): %s\n", ex->what());
+                }
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                crash_log_write("(could not read exception object)\n");
+            }
+        }
+    }
     crash_log_write("RAX=0x%016llX RBX=0x%016llX RCX=0x%016llX RDX=0x%016llX\n",
             ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx);
     crash_log_write("RSI=0x%016llX RDI=0x%016llX RSP=0x%016llX RBP=0x%016llX\n",
             ctx->Rsi, ctx->Rdi, ctx->Rsp, ctx->Rbp);
+    crash_log_write("R8 =0x%016llX R9 =0x%016llX R10=0x%016llX R11=0x%016llX\n",
+            ctx->R8, ctx->R9, ctx->R10, ctx->R11);
+    crash_log_write("R12=0x%016llX R13=0x%016llX R14=0x%016llX R15=0x%016llX\n",
+            ctx->R12, ctx->R13, ctx->R14, ctx->R15);
+    __try {
+        crash_log_write("\nStack (RSP):\n");
+        uint64_t* sp = (uint64_t*)ctx->Rsp;
+        for (int i = 0; i < 16; i++) {
+            __try {
+                crash_log_write("  [RSP+%02X] = 0x%016llX\n", i*8, sp[i]);
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                crash_log_write("  [RSP+%02X] = <unreadable>\n", i*8);
+            }
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
     crash_log_write("================================\n");
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// VEH handler: catch null page reads in guest memory and return 0
+// Decodes common x86-64 load instructions and zeros the destination register.
 static LONG CALLBACK NullPageHandler(EXCEPTION_POINTERS* ep) {
     auto* ctx = ep->ContextRecord;
     auto* rec = ep->ExceptionRecord;
     if (rec->ExceptionCode != STATUS_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
-    if (rec->ExceptionInformation[0] != 0) return EXCEPTION_CONTINUE_SEARCH;
+    if (rec->ExceptionInformation[0] != 0) return EXCEPTION_CONTINUE_SEARCH; // reads only
     uint64_t addr = rec->ExceptionInformation[1];
     uint64_t base = ctx->Rsi;
     if (base >= 0x100000000ULL && base <= 0x200000000ULL &&
@@ -114,24 +147,84 @@ static LONG CALLBACK NullPageHandler(EXCEPTION_POINTERS* ep) {
         int rex = 0, oplen = 0;
         uint8_t op = rip[0];
         if ((op & 0xF0) == 0x40) { rex = op; op = rip[1]; oplen = 1; }
-        if (op == 0x8B) {
-            uint8_t modrm = rip[oplen + 1];
-            int reg = (modrm >> 3) & 7;
-            if (rex & 0x04) reg += 8;
+
+        uint64_t* regs[] = { &ctx->Rax, &ctx->Rcx, &ctx->Rdx, &ctx->Rbx,
+                              &ctx->Rsp, &ctx->Rbp, &ctx->Rsi, &ctx->Rdi,
+                              &ctx->R8, &ctx->R9, &ctx->R10, &ctx->R11,
+                              &ctx->R12, &ctx->R13, &ctx->R14, &ctx->R15 };
+
+        // Helper: decode ModR/M + SIB + displacement length
+        auto calc_modrm_len = [](uint8_t* p, int prefix_len) -> int {
+            uint8_t modrm = p[prefix_len + 1]; // after prefix+opcode(s)
             int mod = (modrm >> 6) & 3;
             int rm = modrm & 7;
-            int insn_len = oplen + 2;
-            if (rm == 4 && mod != 3) insn_len++;
-            if (mod == 0 && rm == 5) insn_len += 4;
-            else if (mod == 1) insn_len += 1;
-            else if (mod == 2) insn_len += 4;
-            uint64_t* regs[] = { &ctx->Rax, &ctx->Rcx, &ctx->Rdx, &ctx->Rbx,
-                                  &ctx->Rsp, &ctx->Rbp, &ctx->Rsi, &ctx->Rdi,
-                                  &ctx->R8, &ctx->R9, &ctx->R10, &ctx->R11,
-                                  &ctx->R12, &ctx->R13, &ctx->R14, &ctx->R15 };
+            int len = prefix_len + 2; // prefix + opcode + modrm
+            if (rm == 4 && mod != 3) len++; // SIB
+            if (mod == 0 && rm == 5) len += 4; // RIP-relative
+            else if (mod == 1) len += 1;
+            else if (mod == 2) len += 4;
+            return len;
+        };
+
+        auto get_reg = [&](uint8_t modrm) -> int {
+            int reg = (modrm >> 3) & 7;
+            if (rex & 0x04) reg += 8; // REX.R
+            return reg;
+        };
+
+        bool handled = false;
+
+        if (op == 0x8B) {
+            // MOV r, r/m (32/64-bit)
+            int reg = get_reg(rip[oplen + 1]);
+            int insn_len = calc_modrm_len(rip, oplen);
             if (reg < 16) *regs[reg] = 0;
             ctx->Rip += insn_len;
-            return EXCEPTION_CONTINUE_EXECUTION;
+            handled = true;
+        }
+        else if (op == 0x0F) {
+            uint8_t op2 = rip[oplen + 1];
+            if (op2 == 0xB6 || op2 == 0xB7) {
+                // MOVZX r, r/m8 (B6) or r/m16 (B7)
+                int reg = get_reg(rip[oplen + 2]);
+                int insn_len = calc_modrm_len(rip, oplen + 1);
+                if (reg < 16) *regs[reg] = 0;
+                ctx->Rip += insn_len;
+                handled = true;
+            }
+            else if (op2 == 0xBE || op2 == 0xBF) {
+                // MOVSX r, r/m8 (BE) or r/m16 (BF)
+                int reg = get_reg(rip[oplen + 2]);
+                int insn_len = calc_modrm_len(rip, oplen + 1);
+                if (reg < 16) *regs[reg] = 0;
+                ctx->Rip += insn_len;
+                handled = true;
+            }
+        }
+        else if (op == 0x8A) {
+            // MOV r8, r/m8
+            int reg = get_reg(rip[oplen + 1]);
+            int insn_len = calc_modrm_len(rip, oplen);
+            if (reg < 16) *regs[reg] = (*regs[reg] & ~0xFFULL); // zero low byte
+            ctx->Rip += insn_len;
+            handled = true;
+        }
+        else if (op == 0x63) {
+            // MOVSXD r64, r/m32
+            int reg = get_reg(rip[oplen + 1]);
+            int insn_len = calc_modrm_len(rip, oplen);
+            if (reg < 16) *regs[reg] = 0;
+            ctx->Rip += insn_len;
+            handled = true;
+        }
+
+        if (handled) return EXCEPTION_CONTINUE_EXECUTION;
+
+        // Fallback: log unhandled instruction encoding
+        static int _unhandled = 0;
+        if (++_unhandled <= 20) {
+            crash_log_write("[NULLPAGE] Unhandled load at guest 0x%04llX, op=0x%02X%02X, RIP=0x%016llX\n",
+                    addr - base, rip[0], rip[1], (unsigned long long)ctx->Rip);
         }
     }
     return EXCEPTION_CONTINUE_SEARCH;
@@ -256,11 +349,14 @@ public:
                     main_thread->Wait(0, 0, 0, nullptr);
                 } catch (const std::exception& e) {
                     fprintf(stderr, "\n========== C++ EXCEPTION ==========\n");
+                    fprintf(stderr, "Thread: %lu\n", GetCurrentThreadId());
                     fprintf(stderr, "what(): %s\n", e.what());
                     fprintf(stderr, "====================================\n");
                     fflush(stderr);
                 } catch (...) {
                     fprintf(stderr, "\n========== UNKNOWN C++ EXCEPTION ==========\n");
+                    fprintf(stderr, "Thread: %lu\n", GetCurrentThreadId());
+                    fprintf(stderr, "=============================================\n");
                     fflush(stderr);
                 }
                 REXLOG_INFO("Execution complete");
