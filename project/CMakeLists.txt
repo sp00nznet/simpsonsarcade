@@ -46,6 +46,7 @@ endif()
 target_include_directories(simpsons PRIVATE
     ${CMAKE_SOURCE_DIR}/../generated
     ${CMAKE_SOURCE_DIR}/../ppc
+    ${REXSDK_PATH}/include/simde
 )
 
 target_link_libraries(simpsons PRIVATE
@@ -81,6 +82,7 @@ add_executable(simpsons_test
 target_include_directories(simpsons_test PRIVATE
     ${CMAKE_SOURCE_DIR}/../generated
     ${CMAKE_SOURCE_DIR}/../ppc
+    ${REXSDK_PATH}/include/simde
 )
 target_link_libraries(simpsons_test PRIVATE
     rex::core
@@ -102,8 +104,11 @@ if(NOT MSVC)
     target_compile_options(simpsons_test PRIVATE -msse4.1)
 endif()
 
-# Whole-archive link for kernel hooks on Linux
-if(NOT WIN32)
+# Whole-archive link for kernel hooks (stubs defined in static lib need forced inclusion)
+if(WIN32)
+    target_link_options(simpsons PRIVATE "LINKER:/WHOLEARCHIVE:$<TARGET_FILE:rex::kernel>")
+    target_link_options(simpsons_test PRIVATE "LINKER:/WHOLEARCHIVE:$<TARGET_FILE:rex::kernel>")
+else()
     target_link_options(simpsons PRIVATE
         -Wl,--whole-archive $<TARGET_FILE:rex::kernel> -Wl,--no-whole-archive
     )

@@ -38,5 +38,14 @@ SIMPSONS_STUB_RETURN(__imp__XUsbcamSetView, 1)
 SIMPSONS_STUB_RETURN(__imp__XUsbcamSetCaptureMode, 1)
 SIMPSONS_STUB_RETURN(__imp__XUsbcamReadFrame, 1)
 
-// ObReferenceObject
-SIMPSONS_STUB(__imp__ObReferenceObject)
+// ObReferenceObject - provided by rex::kernel via WHOLEARCHIVE
+
+// XAM UI stubs not yet in SDK
+SIMPSONS_STUB(__imp__XamShowFriendsUI)
+
+// XAudio ducker stubs not yet in SDK (return sensible defaults)
+SIMPSONS_STUB(__imp__XAudioGetDuckerLevel)
+SIMPSONS_STUB(__imp__XAudioGetDuckerReleaseTime)
+SIMPSONS_STUB(__imp__XAudioGetDuckerAttackTime)
+SIMPSONS_STUB(__imp__XAudioGetDuckerHoldTime)
+SIMPSONS_STUB(__imp__XAudioGetDuckerThreshold)
