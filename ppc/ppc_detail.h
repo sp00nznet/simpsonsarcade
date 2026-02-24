@@ -7,6 +7,11 @@
 #include <cstdio>
 #include <cstdint>
 
+// Import declarations for __imp__* kernel stubs need extern "C" linkage
+// to match the ReXGlue SDK's definitions. PPC_FUNC is expanded at use time
+// (after ppc_context.h defines it), so this deferred expansion works.
+#define PPC_EXTERN_IMPORT(x) extern "C" PPC_FUNC(x)
+
 #define PPC_CALL_INDIRECT_FUNC(x) do { \
     uint32_t _target = (x); \
     if (_target == 0) { \

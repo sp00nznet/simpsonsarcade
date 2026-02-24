@@ -7,8 +7,8 @@
 | 1. Setup | Repo, toolchain, documentation | COMPLETE |
 | 2. Analysis | XenonAnalyse, ABI address hunting | COMPLETE |
 | 3. Configuration | TOML config, function definitions | COMPLETE |
-| 4. Initial Recomp | First XenonRecomp pass, fix errors | IN PROGRESS |
-| 5. Runtime Skeleton | Minimal runtime to link & boot | NOT STARTED |
+| 4. Initial Recomp | First XenonRecomp pass, fix errors | COMPLETE |
+| 5. Runtime Skeleton | ReXGlue SDK build, first link | COMPLETE |
 | 6. Graphics | Xenos -> D3D12/Vulkan rendering | NOT STARTED |
 | 7. Audio | Audio system implementation | NOT STARTED |
 | 8. Input | Controller/keyboard input | NOT STARTED |
@@ -19,7 +19,7 @@
 
 ## Detailed Log
 
-### 2026-02-23 - Project Kickoff & First Recomp Pass
+### 2026-02-23 - Project Kickoff through First Successful Build
 
 **Phase 1 - Setup (COMPLETE):**
 - [x] Initialized repository structure (config/, docs/, tools/, src/, project/)
@@ -41,46 +41,35 @@
 - [x] config/simpsons.toml with all ABI addresses and paths
 - [x] config/simpsons_switch_tables.toml (XenonAnalyse found 0 jump tables)
 
-**Phase 4 - Initial Recomp (IN PROGRESS):**
+**Phase 4 - Initial Recomp (COMPLETE):**
 - [x] Built XenonRecomp (clang-cl 21.1.8 + MSVC 2022, Ninja)
 - [x] Applied Altivec/VMX patch from vig8
 - [x] Ran XenonAnalyse (0 switch tables found)
-- [x] **First XenonRecomp pass complete!**
-  - 15,237 recompiled functions across 59 source files (~45MB)
-  - 1,455 unrecognized instructions across 22 instruction types
-  - Generated: ppc/ppc_recomp.{0..58}.cpp, ppc_func_mapping.cpp, ppc_recomp_shared.h
-- [x] Updated generated/sources.cmake with all 59 recomp files
-- [x] Created ppc/ppc_detail.h for safe PPC_CALL_INDIRECT_FUNC override
-- [x] Updated project/CMakeLists.txt (include paths, PPC_INCLUDE_DETAIL)
-- [ ] Add missing PPC instructions to XenonRecomp (22 types, 1455 instances)
-- [ ] Re-run XenonRecomp after instruction patches
+- [x] First XenonRecomp pass: 15,237 functions across 59 source files (~45MB)
+- [x] Added 21 missing PPC instruction handlers to XenonRecomp
+- [x] Re-ran XenonRecomp: **0 unrecognized instructions**
+- [x] Created patch: tools/patches/xenonrecomp-missing-instructions.patch
 
-**Unrecognized PPC Instructions (22 types, 1455 total):**
-
-| Instruction | Count | Category |
-|-------------|-------|----------|
-| sthu | 287 | Store halfword with update |
-| stfsu | 247 | Store float single with update |
-| lhzu | 227 | Load halfword unsigned with update |
-| lfsu | 185 | Load float single with update |
-| bdzf | 140 | Branch decrement CTR, false |
-| lbzux | 67 | Load byte zero-extend with update indexed |
-| lfsux | 45 | Load float single with update indexed |
-| lhzux | 41 | Load halfword unsigned with update indexed |
-| subfze | 33 | Subtract from zero extended |
-| lhau | 33 | Load halfword algebraic with update |
-| stdux | 28 | Store doubleword with update indexed |
-| addc | 26 | Add carrying |
-| addme | 25 | Add to minus one extended |
-| stbux | 22 | Store byte with update indexed |
-| ldux | 22 | Load doubleword with update indexed |
-| lwzux | 8 | Load word zero-extend with update indexed |
-| subfze. | 4 | Subtract from zero extended (CR) |
-| stfdu | 4 | Store float double with update |
-| lvehx | 4 | Load vector element halfword indexed |
-| sthux | 3 | Store halfword with update indexed |
-| lfdu | 2 | Load float double with update |
-| bdnzt | 2 | Branch decrement CTR, nonzero true |
+**Phase 5 - Runtime Skeleton (COMPLETE):**
+- [x] Built ReXGlue SDK (668 targets, clang/clang++ + vcvarsall)
+  - Fixed 14 broken Git symlinks in libmspack (Windows symlink issue)
+  - SDK installed to tools/rexglue-sdk/out/install/win-amd64/
+- [x] Updated project/CMakeLists.txt for SDK integration
+  - Added SIMDE include path (for PPC vector intrinsics)
+  - Added PPC_INCLUDE_DETAIL compile definition
+  - Added /WHOLEARCHIVE for rexkernel on Windows (kernel import stubs)
+- [x] Fixed extern "C" linkage mismatch for __imp__* kernel imports
+  - Added PPC_EXTERN_IMPORT macro in ppc/ppc_detail.h
+  - Post-processed ppc_recomp_shared.h: PPC_EXTERN_FUNC → PPC_EXTERN_IMPORT for imports
+- [x] Added 25 game-specific stubs in project/src/stubs.cpp
+  - Networking (NetDll_XNetUnregisterInAddr, etc.)
+  - XAM UI (XamShowFriendsUI, XamShowGamerCardUIForXUID, etc.)
+  - XAudio ducker (XAudioGetDuckerLevel, etc.)
+  - USB Camera (XUsbcam*)
+  - Kernel pool (ExAllocatePoolWithTag)
+- [x] **Both executables link successfully!**
+  - simpsons.exe (18MB, windowed GUI)
+  - simpsons_test.exe (18MB, console test)
 
 **Game Details:**
 - **Title:** The Simpsons Arcade
@@ -99,17 +88,26 @@
 
 ---
 
+## Key Technical Discoveries
+
+1. **XenonRecomp + extern "C" mismatch:** The recompiler generates `PPC_EXTERN_FUNC` for all forward declarations, which uses C++ linkage. But the ReXGlue SDK's kernel stubs use `extern "C"` linkage. Required post-processing the shared header to use `PPC_EXTERN_IMPORT` for `__imp__*` imports.
+
+2. **WHOLEARCHIVE required on Windows:** The Xbox 360 kernel stubs in `rexkernel.lib` are only referenced by the recompiled PPC code. Without `/WHOLEARCHIVE`, the static linker doesn't pull in the kernel implementation objects. Linux equivalent: `--whole-archive`.
+
+3. **21 missing PPC instructions:** XenonRecomp didn't handle update-form loads/stores (lhzu, sthu, lfsu, etc.), conditional branch variants (bdzf, bdnzt), integer arithmetic with carry (addc, addme, subfze), and vector element loads (lvehx). Patch adds all 21.
+
+4. **Git symlinks on Windows:** libmspack in the SDK uses symlinks that Git stores as plain text files on Windows. Required manual fixup by copying actual file content.
+
+---
+
 ## Next Steps
 
-1. **Add missing PPC instructions to XenonRecomp** (patch recompiler.cpp)
-   - Update-form load/store (lhzu, sthu, stfsu, lfsu, etc.) - highest priority
-   - Conditional branch variants (bdzf, bdnzt)
-   - Integer arithmetic (subfze, addc, addme)
-   - Vector element loads (lvehx)
-2. Re-run XenonRecomp with patched toolchain
-3. Build ReXGlue SDK
-4. Attempt first compile of the recomp project
-5. Build runtime skeleton (memory mapping, minimal stubs)
+1. **First runtime test** - Run simpsons_test.exe and observe behavior
+2. **Memory mapping** - Ensure PE image is loaded at correct base address
+3. **Graphics hookup** - Connect Xenos GPU commands to D3D12
+4. **Audio hookup** - Connect XMA audio to native audio backend
+5. **Input hookup** - Connect XInput to native input system
+6. **Game data loading** - Mount .SR data archives
 
 ---
 

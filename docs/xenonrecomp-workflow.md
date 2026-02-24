@@ -89,26 +89,73 @@ cd config
 
 **Output:** 59 source files (~45MB) with 15,237 recompiled functions in `ppc/`
 
-### Step 6: Build Runtime (The Hard Part)
+### Step 5b: Post-process Generated Headers
 
-The generated C++ is just the translated game logic. To run the game, we need:
+The generated `ppc_recomp_shared.h` uses `PPC_EXTERN_FUNC` for all declarations, including
+`__imp__*` kernel import stubs. The ReXGlue SDK defines these stubs with `extern "C"` linkage,
+so we must convert the import declarations to use `PPC_EXTERN_IMPORT` (defined in `ppc_detail.h`):
 
-1. **Memory management** - Map Xbox 360 virtual address space
-2. **Graphics** - Translate Xenos GPU draw calls to D3D12 or Vulkan
-3. **Shaders** - Recompile Xenos shaders (XenosRecomp)
-4. **Audio** - XMA/PCM audio decoding and playback
-5. **Input** - Xbox 360 controller calls to PC input
-6. **File I/O** - Xbox 360 file system to PC paths
-7. **Threading** - Xbox 360 threading to Windows/POSIX threads
-8. **System calls** - Xbox 360 kernel stubs (XAM, XEX loader, etc.)
+```bash
+cd ppc
+sed -i 's/PPC_EXTERN_FUNC(__imp__/PPC_EXTERN_IMPORT(__imp__/g' ppc_recomp_shared.h
+```
 
-### Step 7: Iterate
+This ensures the C linkage names match between the recompiled code references and the SDK's
+kernel stub implementations in `rexkernel.lib`.
+
+### Step 6: Build ReXGlue SDK
+
+```bash
+git clone --recursive https://github.com/rexglue/rexglue-sdk.git tools/rexglue-sdk
+cd tools/rexglue-sdk
+
+# Fix Git symlinks on Windows (libmspack uses symlinks that Git stores as plain text)
+# See build script for details
+
+# Build (requires MSVC environment + clang in PATH)
+cmake --preset win-amd64
+cmake --build --preset win-amd64
+cmake --install out/build/win-amd64 --prefix out/install/win-amd64
+```
+
+### Step 7: Build Project
+
+```bash
+cd project
+cmake -B out -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="C:/Program Files/LLVM/bin/clang.exe" \
+  -DCMAKE_CXX_COMPILER="C:/Program Files/LLVM/bin/clang++.exe" \
+  -DCMAKE_CXX_STANDARD=23
+cmake --build out --config Release
+```
+
+**Key CMake settings:**
+- `/WHOLEARCHIVE:rexkernel.lib` on Windows (forces all kernel stubs to link)
+- `PPC_INCLUDE_DETAIL` compile definition (enables ppc_detail.h with custom macros)
+- SIMDE include path (`${REXSDK}/include/simde`) for PPC vector intrinsic headers
+
+### Step 8: Runtime Implementation (The Hard Part)
+
+The generated C++ is just the translated game logic. The ReXGlue SDK provides the runtime:
+
+1. **Memory management** - `rex::kernel` maps Xbox 360 virtual address space
+2. **Graphics** - `rex::graphics` translates Xenos GPU draw calls to D3D12
+3. **Audio** - `rex::audio` handles XMA/PCM audio decoding and playback
+4. **Input** - `rex::input` maps Xbox 360 controller calls to PC input
+5. **File I/O** - `rex::filesystem` translates Xbox 360 paths to PC paths
+6. **Threading** - `rex::kernel` handles Xbox 360 threading model
+7. **System calls** - `rex::kernel` provides 253 Xbox 360 kernel stubs
+8. **UI** - `rex::ui` provides ImGui-based debug overlays
+
+Game-specific stubs not in the SDK are in `project/src/stubs.cpp`.
+
+### Step 9: Iterate
 
 - Fix recompilation errors
 - Add `functions` entries for broken function boundaries
 - Add mid-ASM hooks where needed
 
-### Step 8: Optimize
+### Step 10: Optimize
 
 Enable TOML optimization flags one by one after everything works.
 
