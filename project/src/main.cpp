@@ -3,6 +3,8 @@
 
 #include "simpsons_config.h"
 #include "simpsons_init.h"
+#include "simpsons_settings.h"
+#include "simpsons_menu.h"
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -215,6 +217,16 @@ public:
     bool OnInitialize() override {
         auto exe_dir = rex::filesystem::GetExecutableFolder();
 
+        // Load settings before anything else
+        settings_path_ = exe_dir / "simpsons_settings.toml";
+        settings_ = LoadSettings(settings_path_);
+
+        // Apply sign-in state from settings
+        g_simpsons_user_connected[0] = true;
+        g_simpsons_user_connected[1] = settings_.connected_2;
+        g_simpsons_user_connected[2] = settings_.connected_3;
+        g_simpsons_user_connected[3] = settings_.connected_4;
+
         std::filesystem::path game_dir;
         if (auto arg = GetArgument("game_directory")) {
             game_dir = *arg;
@@ -285,8 +297,16 @@ public:
                     immediate_drawer_->SetPresenter(presenter);
                     imgui_drawer_ = std::make_unique<rex::ui::ImGuiDrawer>(window_.get(), 64);
                     imgui_drawer_->SetPresenterAndImmediateDrawer(presenter, immediate_drawer_.get());
-                    debug_overlay_ = std::unique_ptr<DebugOverlayDialog>(
-                        new DebugOverlayDialog(imgui_drawer_.get()));
+                    if (settings_.show_fps) {
+                        debug_overlay_ = std::unique_ptr<DebugOverlayDialog>(
+                            new DebugOverlayDialog(imgui_drawer_.get()));
+                    }
+                    // Create menu system
+                    menu_system_ = std::make_unique<MenuSystem>(
+                        imgui_drawer_.get(), window_.get(), &app_context(),
+                        runtime_.get(), &settings_, settings_path_,
+                        [this]() { ApplySettings(); });
+                    window_->SetMainMenu(menu_system_->BuildMenuBar());
                     runtime_->set_display_window(window_.get());
                     runtime_->set_imgui_drawer(imgui_drawer_.get());
                 }
@@ -340,6 +360,7 @@ public:
     }
 
     void OnDestroy() override {
+        menu_system_.reset();
         debug_overlay_.reset();
         if (imgui_drawer_) {
             imgui_drawer_->SetPresenterAndImmediateDrawer(nullptr, nullptr);
@@ -367,6 +388,22 @@ public:
     }
 
 private:
+    void ApplySettings() {
+        // Toggle FPS overlay based on settings
+        if (settings_.show_fps && !debug_overlay_ && imgui_drawer_) {
+            debug_overlay_ = std::unique_ptr<DebugOverlayDialog>(
+                new DebugOverlayDialog(imgui_drawer_.get()));
+        } else if (!settings_.show_fps && debug_overlay_) {
+            debug_overlay_.reset();
+        }
+
+        // Apply sign-in state
+        g_simpsons_user_connected[0] = true;
+        g_simpsons_user_connected[1] = settings_.connected_2;
+        g_simpsons_user_connected[2] = settings_.connected_3;
+        g_simpsons_user_connected[3] = settings_.connected_4;
+    }
+
     std::unique_ptr<rex::Runtime> runtime_;
     std::unique_ptr<rex::ui::Window> window_;
     std::thread module_thread_;
@@ -374,6 +411,9 @@ private:
     std::unique_ptr<rex::ui::ImmediateDrawer> immediate_drawer_;
     std::unique_ptr<rex::ui::ImGuiDrawer> imgui_drawer_;
     std::unique_ptr<DebugOverlayDialog> debug_overlay_;
+    std::unique_ptr<MenuSystem> menu_system_;
+    SimpsonsSettings settings_;
+    std::filesystem::path settings_path_;
 };
 
 XE_DEFINE_WINDOWED_APP(simpsons, SimpsonsApp::Create)
