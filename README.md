@@ -29,7 +29,7 @@ A static recompilation of **The Simpsons Arcade** (Xbox 360 / XBLA) to native x8
 | Speed fix (VdSwap frame limiter + timebase scaling) | Done |
 | Menu system & settings (ImGui + Win32 menu bar) | Done |
 | Keyboard-to-gamepad input driver | Done |
-| Game unlocks (levels, ROMs, cool stuff) | In Progress |
+| Game unlocks (levels, ROMs, cool stuff) | In Progress — achievement overrides working, investigating save/progress system |
 | Network (LAN multiplayer) | Not Started |
 | Polish & optimization | Not Started |
 
