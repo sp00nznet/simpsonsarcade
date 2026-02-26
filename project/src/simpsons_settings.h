@@ -15,6 +15,7 @@ struct SimpsonsSettings {
     // [game]
     bool full_game = true;            // unlock all content (skip trial mode)
     bool unlock_cool_stuff = true;    // unlock "cool stuff" menu
+    bool unlock_all = true;           // unlock all levels, ROMs, and cool stuff
 
     // [controls]
     std::string controller_1 = "auto";
@@ -33,6 +34,11 @@ struct SimpsonsSettings {
 // Per-slot sign-in state (defined in stubs.cpp, set from ApplySettings)
 // Player 1 is always connected; slots 1-3 controlled by settings.
 extern bool g_simpsons_user_connected[4];
+
+// Unlock-all flag (defined in stubs.cpp, set from ApplySettings)
+// When true, forces all achievements to "achieved" status, unlocking
+// Cool Stuff menu, ROM versions, and all levels.
+extern bool g_simpsons_unlock_all;
 
 // Load settings from TOML file. Returns defaults if file doesn't exist.
 SimpsonsSettings LoadSettings(const std::filesystem::path& path);
