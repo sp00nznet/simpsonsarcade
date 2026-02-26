@@ -1983,19 +1983,37 @@ PPC_FUNC(__imp__VdSwap)
             thread_give_timeslice(pt, i);
     }
 
-    // Pump Win32 messages and sleep to prevent 100% CPU usage.
+    // Frame limiter: target ~60 FPS (16.67ms per frame).
+    // Windows Sleep(16) actually sleeps ~31ms due to 15.6ms timer granularity.
+    // Use QueryPerformanceCounter for precise timing with Sleep(1) yielding.
 #ifdef _WIN32
-    MSG msg;
-    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
     {
-        if (msg.message == WM_QUIT)
-            ExitProcess(0);
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        static LARGE_INTEGER s_freq = {};
+        static LARGE_INTEGER s_last = {};
+        if (s_freq.QuadPart == 0) {
+            QueryPerformanceFrequency(&s_freq);
+            QueryPerformanceCounter(&s_last);
+        }
+        const int64_t target_us = 16667; // 16.667ms = 60 Hz
+        LARGE_INTEGER now;
+        for (;;) {
+            MSG msg;
+            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                if (msg.message == WM_QUIT) ExitProcess(0);
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+            QueryPerformanceCounter(&now);
+            int64_t elapsed_us = (now.QuadPart - s_last.QuadPart) * 1000000 / s_freq.QuadPart;
+            if (elapsed_us >= target_us) break;
+            // Coarse sleep if >2ms remain, otherwise spin
+            if (elapsed_us < target_us - 2000)
+                Sleep(1);
+        }
+        QueryPerformanceCounter(&s_last);
     }
-    Sleep(16); // ~60 FPS cap
 #else
-    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    std::this_thread::sleep_for(std::chrono::microseconds(16667));
 #endif
 }
 

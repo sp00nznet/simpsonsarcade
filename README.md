@@ -2,7 +2,7 @@
 
 A static recompilation of **The Simpsons Arcade** (Xbox 360 / XBLA) to native x86-64 PC using [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and the [ReXGlue SDK](https://github.com/hedge-dev/ReXGlue).
 
-**The game is playable** — boots through menus, renders gameplay, audio playing.
+**The game is playable at full speed** — boots through menus, renders gameplay, audio playing, keyboard and controller input working.
 
 ## Screenshots
 
@@ -24,9 +24,12 @@ A static recompilation of **The Simpsons Arcade** (Xbox 360 / XBLA) to native x8
 | Xbox 360 kernel import stubs | Done |
 | Graphics (Xenos -> D3D12/Vulkan via ReXGlue) | Done |
 | Audio (XMA2 via ReXGlue) | Done |
-| Input (SDL GameController) | Done |
+| Input (SDL GameController + Keyboard) | Done |
 | Crash logging & VEH handler | Done |
-| Menu system & settings | In Progress |
+| Speed fix (VdSwap frame limiter + timebase scaling) | Done |
+| Menu system & settings (ImGui + Win32 menu bar) | Done |
+| Keyboard-to-gamepad input driver | Done |
+| Game unlocks (levels, ROMs, cool stuff) | In Progress |
 | Network (LAN multiplayer) | Not Started |
 | Polish & optimization | Not Started |
 
@@ -60,6 +63,7 @@ simpsonsarcade/
 │   │   ├── stubs.cpp              # Game-specific Xbox 360 API stubs
 │   │   ├── simpsons_settings.h/cpp # Settings persistence (TOML)
 │   │   ├── simpsons_menu.h/cpp    # Menu bar & ImGui config dialogs
+│   │   ├── keyboard_driver.h/cpp  # Keyboard-to-gamepad input driver
 │   │   └── test_boot.cpp          # Console test harness
 │   └── out/                       # CMake build output
 ├── src/                           # Generic runtime source (shared with SDK)
@@ -117,6 +121,15 @@ cmake --build out
 Unlike emulation (which interprets instructions at runtime), static recompilation translates the entire PowerPC binary ahead of time into equivalent C++ source code. Each PPC instruction maps to C++ code operating on a CPU state struct. The result is a native executable that runs at full speed without an emulator.
 
 The ReXGlue SDK provides the runtime environment: Xbox 360 kernel emulation, graphics translation (Xenos GPU -> D3D12/Vulkan), audio (XMA2 decoding), input (SDL GameController -> XInput mapping), and memory management.
+
+### Speed Fix
+
+The game originally ran at half speed (~30 FPS game logic) despite reporting ~70 FPS. Two fixes were needed:
+
+1. **VdSwap frame limiter** — The `Sleep(16)` in VdSwap actually sleeps ~31ms on Windows (15.6ms timer granularity). Replaced with a precise `QueryPerformanceCounter` frame limiter targeting 16.667ms.
+2. **Timebase scaling** — XenonRecomp generates `__rdtsc()` for PPC `mftb` instructions, but host TSC runs at ~3-4 GHz vs Xbox 360's 49.875 MHz. Overridden to route through the SDK's scaled guest timebase.
+
+See [docs/speed-fix.md](docs/speed-fix.md) for full details and instructions for porting to other projects.
 
 ## References
 

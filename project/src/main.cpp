@@ -5,6 +5,7 @@
 #include "simpsons_init.h"
 #include "simpsons_settings.h"
 #include "simpsons_menu.h"
+#include "keyboard_driver.h"
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -12,6 +13,7 @@
 #include <rex/logging.h>
 #include <rex/kernel/xthread.h>
 #include <rex/kernel/kernel_state.h>
+#include <rex/input/input_system.h>
 #include <rex/graphics/graphics_system.h>
 #include <rex/ui/window.h>
 #include <rex/ui/window_listener.h>
@@ -314,6 +316,14 @@ public:
             window_->SetPresenter(presenter);
         }
 
+        // Register keyboard input driver at front of driver list so it's polled first
+        if (runtime_->kernel_state() && runtime_->kernel_state()->input_system()) {
+            auto kbd = std::make_unique<KeyboardInputDriver>(window_.get());
+            kbd->Setup();
+            runtime_->kernel_state()->input_system()->InsertDriverFront(std::move(kbd));
+            REXLOG_INFO("Keyboard input driver registered (front priority)");
+        }
+
         app_context().CallInUIThreadDeferred([this]() {
             auto main_thread = runtime_->LaunchModule();
             if (!main_thread) {
@@ -414,6 +424,7 @@ private:
     std::unique_ptr<MenuSystem> menu_system_;
     SimpsonsSettings settings_;
     std::filesystem::path settings_path_;
+    // KeyboardInputDriver is owned by InputSystem via InsertDriverFront
 };
 
 XE_DEFINE_WINDOWED_APP(simpsons, SimpsonsApp::Create)

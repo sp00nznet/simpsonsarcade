@@ -7,6 +7,21 @@
 #include <cstdio>
 #include <cstdint>
 
+// ============================================================================
+// Timebase fix: XenonRecomp generates __rdtsc() for mftb instructions,
+// but the host TSC runs at ~3-4 GHz while the Xbox 360 timebase is 49.875 MHz.
+// Override __rdtsc() to return the SDK's properly scaled guest tick count.
+// ============================================================================
+#include <rex/time/clock.h>
+
+inline uint64_t __ppc_query_timebase() {
+    return rex::chrono::Clock::QueryGuestTickCount();
+}
+
+// Redefine __rdtsc to use scaled timebase. This macro intercepts all
+// generated mftb -> __rdtsc() calls in the recompiled PPC code.
+#define __rdtsc() __ppc_query_timebase()
+
 // Import declarations for __imp__* kernel stubs need extern "C" linkage
 // to match the ReXGlue SDK's definitions. PPC_FUNC is expanded at use time
 // (after ppc_context.h defines it), so this deferred expansion works.
