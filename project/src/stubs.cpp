@@ -49,3 +49,5 @@ SIMPSONS_STUB(__imp__XAudioGetDuckerReleaseTime)
 SIMPSONS_STUB(__imp__XAudioGetDuckerAttackTime)
 SIMPSONS_STUB(__imp__XAudioGetDuckerHoldTime)
 SIMPSONS_STUB(__imp__XAudioGetDuckerThreshold)
+
+// (entry point shim removed - using real _xstart from recompiled code)

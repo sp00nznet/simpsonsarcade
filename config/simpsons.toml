@@ -22,9 +22,16 @@ restvmx_64_address = 0x8225E9EC
 # longjmp_address = 0x00000000
 # setjmp_address = 0x00000000
 
-# Manual function definitions to fix switch case boundary errors.
-# TODO: Add after running XenonRecomp and analyzing errors
-functions = []
+# Manual function definitions for entry points missed by static analysis.
+# These are addresses called indirectly (vtable, function pointers) that
+# XenonRecomp didn't detect as function starts.
+functions = [
+    { address = 0x820C62A8, size = 0x20 },   # gap before sub_820C62C8
+    { address = 0x8214E57C, size = 0x6C },   # gap before sub_8214E5E8
+    { address = 0x82129FC4, size = 0x354 },  # inside sub_82129E98 range
+    { address = 0x82123E58, size = 0x284 },  # gap before sub_821240DC
+    { address = 0x82140EB4, size = 0x1470 }, # gap before sub_82142324
+]
 
 [optimizations]
 # All optimizations DISABLED for initial recompilation pass
