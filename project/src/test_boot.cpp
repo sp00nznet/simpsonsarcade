@@ -13,49 +13,105 @@
 #ifdef _WIN32
 #include <windows.h>
 
-static LONG CALLBACK NullPageHandler(EXCEPTION_POINTERS* ep) {
-    auto* ctx = ep->ContextRecord;
+// Guest memory base (set after runtime->Setup())
+static uint64_t g_guest_base = 0;
+static uint64_t g_guest_end = 0;
+
+// Commit guest virtual pages on demand when accessed but not yet committed.
+// The SDK reserves the full 4GB guest address space at 'base', but only commits
+// pages that are explicitly allocated. Some game code (GPU init, etc.) may access
+// pages that should have been committed by an unimplemented API.
+static LONG CALLBACK GuestPageCommitHandler(EXCEPTION_POINTERS* ep) {
     auto* rec = ep->ExceptionRecord;
     if (rec->ExceptionCode != STATUS_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
-    if (rec->ExceptionInformation[0] != 0) return EXCEPTION_CONTINUE_SEARCH;
     uint64_t addr = rec->ExceptionInformation[1];
-    uint64_t base = ctx->Rsi;
-    if (base >= 0x100000000ULL && base <= 0x200000000ULL &&
-        addr >= base && addr < base + 0x10000) {
-        uint8_t* rip = (uint8_t*)ctx->Rip;
-        int rex = 0, oplen = 0;
-        uint8_t op = rip[0];
-        if ((op & 0xF0) == 0x40) { rex = op; op = rip[1]; oplen = 1; }
-        if (op == 0x8B) {
-            uint8_t modrm = rip[oplen + 1];
-            int reg = (modrm >> 3) & 7;
-            if (rex & 0x04) reg += 8;
-            int mod = (modrm >> 6) & 3;
-            int rm = modrm & 7;
-            int insn_len = oplen + 2;
-            if (rm == 4 && mod != 3) insn_len++;
-            if (mod == 0 && rm == 5) insn_len += 4;
-            else if (mod == 1) insn_len += 1;
-            else if (mod == 2) insn_len += 4;
-            uint64_t* regs[] = { &ctx->Rax, &ctx->Rcx, &ctx->Rdx, &ctx->Rbx,
-                                  &ctx->Rsp, &ctx->Rbp, &ctx->Rsi, &ctx->Rdi,
-                                  &ctx->R8, &ctx->R9, &ctx->R10, &ctx->R11,
-                                  &ctx->R12, &ctx->R13, &ctx->R14, &ctx->R15 };
-            if (reg < 16) *regs[reg] = 0;
-            ctx->Rip += insn_len;
-            return EXCEPTION_CONTINUE_EXECUTION;
+    // Check if it's in guest address space (dynamic range from runtime)
+    if (addr < g_guest_base || addr >= g_guest_end) return EXCEPTION_CONTINUE_SEARCH;
+    // Try to commit the faulting page
+    void* page = (void*)(addr & ~0xFFFULL);
+    void* result = VirtualAlloc(page, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+    if (result) {
+        static int count = 0;
+        if (++count <= 50) {
+            uint32_t ppc_addr = (uint32_t)(addr - g_guest_base);
+            fprintf(stderr, "[PAGECOMMIT] Committed page for PPC 0x%08X (host %p) %s\n",
+                    ppc_addr, page,
+                    rec->ExceptionInformation[0] == 0 ? "READ" : "WRITE");
+            fflush(stderr);
+        }
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    // VirtualAlloc failed - log it
+    {
+        static int fail_count = 0;
+        if (++fail_count <= 10) {
+            uint32_t ppc_addr = (uint32_t)(addr - g_guest_base);
+            fprintf(stderr, "[PAGECOMMIT] FAILED to commit page for PPC 0x%08X (host %p, err=%lu)\n",
+                    ppc_addr, page, GetLastError());
+            fflush(stderr);
         }
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-static LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
+static LONG CALLBACK CrashVEH(EXCEPTION_POINTERS* ep) {
     auto* ctx = ep->ContextRecord;
     auto* rec = ep->ExceptionRecord;
-    fprintf(stderr, "\n========== CRASH ==========\n");
+    if (rec->ExceptionCode == EXCEPTION_BREAKPOINT ||
+        rec->ExceptionCode == EXCEPTION_SINGLE_STEP ||
+        rec->ExceptionCode == 0x406D1388) return EXCEPTION_CONTINUE_SEARCH;
+    fprintf(stderr, "\n========== EXCEPTION ==========\n");
+    fprintf(stderr, "Thread: %lu\n", GetCurrentThreadId());
     fprintf(stderr, "Exception: 0x%08lX at RIP=0x%016llX\n",
             rec->ExceptionCode, (unsigned long long)ctx->Rip);
-    fprintf(stderr, "===========================\n");
+    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION) {
+        fprintf(stderr, "Access address: 0x%016llX (%s)\n",
+                (unsigned long long)rec->ExceptionInformation[1],
+                rec->ExceptionInformation[0] == 0 ? "READ" : "WRITE");
+    }
+    // Get module base address for RVA calculation
+    HMODULE hMod = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                       (LPCSTR)ctx->Rip, &hMod);
+    if (hMod) {
+        fprintf(stderr, "Module base: 0x%016llX  RVA: 0x%08llX\n",
+                (unsigned long long)hMod,
+                (unsigned long long)(ctx->Rip - (uint64_t)hMod));
+    }
+    fprintf(stderr, "RAX=0x%016llX RBX=0x%016llX RCX=0x%016llX RDX=0x%016llX\n",
+            ctx->Rax, ctx->Rbx, ctx->Rcx, ctx->Rdx);
+    fprintf(stderr, "RSI=0x%016llX RDI=0x%016llX RSP=0x%016llX RBP=0x%016llX\n",
+            ctx->Rsi, ctx->Rdi, ctx->Rsp, ctx->Rbp);
+    fprintf(stderr, "R8 =0x%016llX R9 =0x%016llX R10=0x%016llX R11=0x%016llX\n",
+            ctx->R8, ctx->R9, ctx->R10, ctx->R11);
+    fprintf(stderr, "R12=0x%016llX R13=0x%016llX R14=0x%016llX R15=0x%016llX\n",
+            ctx->R12, ctx->R13, ctx->R14, ctx->R15);
+    // Dump bytes at RIP for instruction identification
+    fprintf(stderr, "Bytes at RIP: ");
+    __try {
+        uint8_t* rip = (uint8_t*)ctx->Rip;
+        for (int i = 0; i < 16; i++) fprintf(stderr, "%02X ", rip[i]);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        fprintf(stderr, "<unreadable>");
+    }
+    fprintf(stderr, "\n");
+    // Stack dump (extended)
+    __try {
+        fprintf(stderr, "Stack (RSP) - 48 entries:\n");
+        uint64_t* sp = (uint64_t*)ctx->Rsp;
+        for (int i = 0; i < 48; i++) {
+            __try {
+                // Mark likely return addresses (in module range)
+                uint64_t val = sp[i];
+                bool likely_ret = (hMod && val >= (uint64_t)hMod && val < (uint64_t)hMod + 0x10000000);
+                fprintf(stderr, "  [RSP+%03X] = 0x%016llX%s\n", i*8, val,
+                        likely_ret ? "  <-- likely return addr" : "");
+            } __except(EXCEPTION_EXECUTE_HANDLER) {
+                fprintf(stderr, "  [RSP+%03X] = <unreadable>\n", i*8);
+            }
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    fprintf(stderr, "================================\n");
     fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -63,8 +119,9 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
-    AddVectoredExceptionHandler(1, NullPageHandler);
-    SetUnhandledExceptionFilter(CrashHandler);
+    AddVectoredExceptionHandler(0, CrashVEH);  // last priority, logs everything
+    // NOTE: GuestPageCommitHandler registered AFTER runtime->Setup() so it runs
+    // BEFORE the SDK's MMIO handler in the VEH LIFO chain.
 #endif
     fprintf(stderr, "[test] Starting ReXGlue boot test (The Simpsons Arcade)...\n");
     fflush(stderr);
@@ -100,6 +157,19 @@ int main(int argc, char** argv) {
         fprintf(stderr, "[test] Setup FAILED\n");
         return 1;
     }
+
+#ifdef _WIN32
+    // Set up guest address range from the actual runtime membase
+    g_guest_base = (uint64_t)runtime->virtual_membase();
+    g_guest_end = g_guest_base + 0x200000000ULL;  // 8GB: virtual (4GB) + physical (4GB)
+    fprintf(stderr, "[test] virtual_membase = %p (guest range: 0x%llX - 0x%llX)\n",
+            runtime->virtual_membase(),
+            (unsigned long long)g_guest_base, (unsigned long long)g_guest_end);
+    fflush(stderr);
+    // Register with priority 0 (LAST) so the SDK's MMIO handler processes
+    // GPU/XMA register faults first. Only unhandled faults reach our handler.
+    AddVectoredExceptionHandler(0, GuestPageCommitHandler);
+#endif
 
     status = runtime->LoadXexImage("game:\\default.xex");
     fprintf(stderr, "[test] LoadXexImage returned: 0x%08X\n", status);

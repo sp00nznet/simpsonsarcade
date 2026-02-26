@@ -79,13 +79,24 @@ static struct StderrRedirect_ {
     }
 } g_stderr_redirect_;
 
+// Guest memory base (set after runtime->Setup())
+static uint64_t g_guest_base = 0;
+static uint64_t g_guest_end = 0;
+
 // VEH handler: log ALL crashes/exceptions (runs on any thread)
 static LONG CALLBACK CrashVEH(EXCEPTION_POINTERS* ep) {
     auto* ctx = ep->ContextRecord;
     auto* rec = ep->ExceptionRecord;
-    // Skip breakpoints and single-step (debugger noise)
+    // Skip debugger noise and MS_VC_EXCEPTION (thread naming)
     if (rec->ExceptionCode == EXCEPTION_BREAKPOINT ||
-        rec->ExceptionCode == EXCEPTION_SINGLE_STEP) return EXCEPTION_CONTINUE_SEARCH;
+        rec->ExceptionCode == EXCEPTION_SINGLE_STEP ||
+        rec->ExceptionCode == 0x406D1388) return EXCEPTION_CONTINUE_SEARCH;
+    // Skip ACCESS_VIOLATION in guest memory range - handled by PageCommit/MMIO handlers
+    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION && g_guest_end > 0) {
+        uint64_t addr = rec->ExceptionInformation[1];
+        if (addr >= g_guest_base && addr < g_guest_end)
+            return EXCEPTION_CONTINUE_SEARCH;
+    }
     crash_log_write("\n========== EXCEPTION ==========\n");
     crash_log_write("Thread: %lu\n", GetCurrentThreadId());
     crash_log_write("Exception: 0x%08lX at RIP=0x%016llX\n",
@@ -94,6 +105,14 @@ static LONG CALLBACK CrashVEH(EXCEPTION_POINTERS* ep) {
         crash_log_write("Access address: 0x%016llX (%s)\n",
                 (unsigned long long)rec->ExceptionInformation[1],
                 rec->ExceptionInformation[0] == 0 ? "READ" : "WRITE");
+    }
+    HMODULE hMod = NULL;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                       (LPCSTR)ctx->Rip, &hMod);
+    if (hMod) {
+        crash_log_write("Module base: 0x%016llX  RVA: 0x%08llX\n",
+                (unsigned long long)hMod,
+                (unsigned long long)(ctx->Rip - (uint64_t)hMod));
     }
     if (rec->ExceptionCode == 0xE06D7363) {
         crash_log_write("*** C++ EXCEPTION (throw) ***\n");
@@ -132,110 +151,38 @@ static LONG CALLBACK CrashVEH(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-// VEH handler: catch null page reads in guest memory and return 0
-// Decodes common x86-64 load instructions and zeros the destination register.
-static LONG CALLBACK NullPageHandler(EXCEPTION_POINTERS* ep) {
-    auto* ctx = ep->ContextRecord;
+// Commit guest virtual pages on demand when accessed but not yet committed.
+// The SDK reserves the full 4GB guest address space at 'base', but only commits
+// pages that are explicitly allocated. Some game code may access pages that
+// should have been committed by an unimplemented API.
+static LONG CALLBACK GuestPageCommitHandler(EXCEPTION_POINTERS* ep) {
     auto* rec = ep->ExceptionRecord;
     if (rec->ExceptionCode != STATUS_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
-    if (rec->ExceptionInformation[0] != 0) return EXCEPTION_CONTINUE_SEARCH; // reads only
     uint64_t addr = rec->ExceptionInformation[1];
-    uint64_t base = ctx->Rsi;
-    if (base >= 0x100000000ULL && base <= 0x200000000ULL &&
-        addr >= base && addr < base + 0x10000) {
-        uint8_t* rip = (uint8_t*)ctx->Rip;
-        int rex = 0, oplen = 0;
-        uint8_t op = rip[0];
-        if ((op & 0xF0) == 0x40) { rex = op; op = rip[1]; oplen = 1; }
-
-        uint64_t* regs[] = { &ctx->Rax, &ctx->Rcx, &ctx->Rdx, &ctx->Rbx,
-                              &ctx->Rsp, &ctx->Rbp, &ctx->Rsi, &ctx->Rdi,
-                              &ctx->R8, &ctx->R9, &ctx->R10, &ctx->R11,
-                              &ctx->R12, &ctx->R13, &ctx->R14, &ctx->R15 };
-
-        // Helper: decode ModR/M + SIB + displacement length
-        auto calc_modrm_len = [](uint8_t* p, int prefix_len) -> int {
-            uint8_t modrm = p[prefix_len + 1]; // after prefix+opcode(s)
-            int mod = (modrm >> 6) & 3;
-            int rm = modrm & 7;
-            int len = prefix_len + 2; // prefix + opcode + modrm
-            if (rm == 4 && mod != 3) len++; // SIB
-            if (mod == 0 && rm == 5) len += 4; // RIP-relative
-            else if (mod == 1) len += 1;
-            else if (mod == 2) len += 4;
-            return len;
-        };
-
-        auto get_reg = [&](uint8_t modrm) -> int {
-            int reg = (modrm >> 3) & 7;
-            if (rex & 0x04) reg += 8; // REX.R
-            return reg;
-        };
-
-        bool handled = false;
-
-        if (op == 0x8B) {
-            // MOV r, r/m (32/64-bit)
-            int reg = get_reg(rip[oplen + 1]);
-            int insn_len = calc_modrm_len(rip, oplen);
-            if (reg < 16) *regs[reg] = 0;
-            ctx->Rip += insn_len;
-            handled = true;
+    // Check if it's in guest address space (dynamic range from runtime)
+    if (addr < g_guest_base || addr >= g_guest_end) return EXCEPTION_CONTINUE_SEARCH;
+    void* page = (void*)(addr & ~0xFFFULL);
+    void* result = VirtualAlloc(page, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+    if (result) {
+        static int count = 0;
+        if (++count <= 50) {
+            uint32_t ppc_addr = (uint32_t)(addr - g_guest_base);
+            crash_log_write("[PAGECOMMIT] Committed page for PPC 0x%08X (host %p) %s\n",
+                    ppc_addr, page,
+                    rec->ExceptionInformation[0] == 0 ? "READ" : "WRITE");
         }
-        else if (op == 0x0F) {
-            uint8_t op2 = rip[oplen + 1];
-            if (op2 == 0xB6 || op2 == 0xB7) {
-                // MOVZX r, r/m8 (B6) or r/m16 (B7)
-                int reg = get_reg(rip[oplen + 2]);
-                int insn_len = calc_modrm_len(rip, oplen + 1);
-                if (reg < 16) *regs[reg] = 0;
-                ctx->Rip += insn_len;
-                handled = true;
-            }
-            else if (op2 == 0xBE || op2 == 0xBF) {
-                // MOVSX r, r/m8 (BE) or r/m16 (BF)
-                int reg = get_reg(rip[oplen + 2]);
-                int insn_len = calc_modrm_len(rip, oplen + 1);
-                if (reg < 16) *regs[reg] = 0;
-                ctx->Rip += insn_len;
-                handled = true;
-            }
-        }
-        else if (op == 0x8A) {
-            // MOV r8, r/m8
-            int reg = get_reg(rip[oplen + 1]);
-            int insn_len = calc_modrm_len(rip, oplen);
-            if (reg < 16) *regs[reg] = (*regs[reg] & ~0xFFULL); // zero low byte
-            ctx->Rip += insn_len;
-            handled = true;
-        }
-        else if (op == 0x63) {
-            // MOVSXD r64, r/m32
-            int reg = get_reg(rip[oplen + 1]);
-            int insn_len = calc_modrm_len(rip, oplen);
-            if (reg < 16) *regs[reg] = 0;
-            ctx->Rip += insn_len;
-            handled = true;
-        }
-
-        if (handled) return EXCEPTION_CONTINUE_EXECUTION;
-
-        // Fallback: log unhandled instruction encoding
-        static int _unhandled = 0;
-        if (++_unhandled <= 20) {
-            crash_log_write("[NULLPAGE] Unhandled load at guest 0x%04llX, op=0x%02X%02X, RIP=0x%016llX\n",
-                    addr - base, rip[0], rip[1], (unsigned long long)ctx->Rip);
-        }
+        return EXCEPTION_CONTINUE_EXECUTION;
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-static struct NullPageGuard_ {
-    NullPageGuard_() {
+static struct VEHGuard_ {
+    VEHGuard_() {
         AddVectoredExceptionHandler(0, CrashVEH);
-        AddVectoredExceptionHandler(1, NullPageHandler);
+        // NOTE: GuestPageCommitHandler is registered AFTER runtime->Setup()
+        // so it runs BEFORE the SDK's MMIO handler in the VEH LIFO chain.
     }
-} g_null_page_guard_;
+} g_veh_guard_;
 #endif
 
 class DebugOverlayDialog : public rex::ui::ImGuiDialog {
@@ -301,6 +248,17 @@ public:
             REXLOG_ERROR("Runtime setup failed: {:08X}", status);
             return false;
         }
+
+#ifdef _WIN32
+        // Set up guest address range from the actual runtime membase
+        g_guest_base = (uint64_t)runtime_->virtual_membase();
+        g_guest_end = g_guest_base + 0x200000000ULL;  // 8GB: virtual (4GB) + physical (4GB)
+        REXLOG_INFO("virtual_membase = {:016X} (guest range: {:X} - {:X})",
+                    g_guest_base, g_guest_base, g_guest_end);
+        // Register with priority 0 (LAST) so the SDK's MMIO handler processes
+        // GPU/XMA register faults first. Only unhandled faults reach our handler.
+        AddVectoredExceptionHandler(0, GuestPageCommitHandler);
+#endif
 
         status = runtime_->LoadXexImage("game:\\default.xex");
         if (XFAILED(status)) {
