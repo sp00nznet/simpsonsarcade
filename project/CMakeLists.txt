@@ -33,6 +33,7 @@ if(WIN32)
         src/stubs.cpp
         src/simpsons_settings.cpp
         src/simpsons_menu.cpp
+        src/keyboard_driver.cpp
         ${ENTRY_POINT_SRC}
         ${GENERATED_SOURCES}
     )
@@ -42,6 +43,7 @@ else()
         src/stubs.cpp
         src/simpsons_settings.cpp
         src/simpsons_menu.cpp
+        src/keyboard_driver.cpp
         ${ENTRY_POINT_SRC}
         ${GENERATED_SOURCES}
     )
