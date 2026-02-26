@@ -229,6 +229,9 @@ public:
         g_simpsons_user_connected[2] = settings_.connected_3;
         g_simpsons_user_connected[3] = settings_.connected_4;
 
+        // Apply unlock state
+        g_simpsons_unlock_all = settings_.unlock_all;
+
         std::filesystem::path game_dir;
         if (auto arg = GetArgument("game_directory")) {
             game_dir = *arg;
@@ -412,6 +415,9 @@ private:
         g_simpsons_user_connected[1] = settings_.connected_2;
         g_simpsons_user_connected[2] = settings_.connected_3;
         g_simpsons_user_connected[3] = settings_.connected_4;
+
+        // Apply unlock state
+        g_simpsons_unlock_all = settings_.unlock_all;
     }
 
     std::unique_ptr<rex::Runtime> runtime_;

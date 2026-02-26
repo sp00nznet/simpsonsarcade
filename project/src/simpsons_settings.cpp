@@ -22,6 +22,7 @@ SimpsonsSettings LoadSettings(const std::filesystem::path& path) {
         // [game]
         s.full_game = tbl["game"]["full_game"].value_or(s.full_game);
         s.unlock_cool_stuff = tbl["game"]["unlock_cool_stuff"].value_or(s.unlock_cool_stuff);
+        s.unlock_all = tbl["game"]["unlock_all"].value_or(s.unlock_all);
 
         // [controls]
         s.controller_1 = tbl["controls"]["controller_1"].value_or(s.controller_1);
@@ -55,6 +56,7 @@ void SaveSettings(const std::filesystem::path& path, const SimpsonsSettings& s) 
     f << "[game]\n";
     f << "full_game = " << (s.full_game ? "true" : "false") << "\n";
     f << "unlock_cool_stuff = " << (s.unlock_cool_stuff ? "true" : "false") << "\n";
+    f << "unlock_all = " << (s.unlock_all ? "true" : "false") << "\n";
     f << "\n";
 
     f << "[controls]\n";

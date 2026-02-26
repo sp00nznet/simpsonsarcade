@@ -130,17 +130,19 @@ public:
           settings_path_(settings_path), on_done_(std::move(on_done)) {
         full_game_ = settings->full_game;
         unlock_cool_stuff_ = settings->unlock_cool_stuff;
+        unlock_all_ = settings->unlock_all;
     }
 
 protected:
     void OnDraw(ImGuiIO& io) override {
         (void)io;
-        ImGui::SetNextWindowSize(ImVec2(380, 180), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(400, 210), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Game Options##simpsons", nullptr,
                          ImGuiWindowFlags_NoCollapse |
                          ImGuiWindowFlags_NoResize)) {
             ImGui::Checkbox("Unlock full game (skip trial mode)", &full_game_);
             ImGui::Checkbox("Unlock \"Cool Stuff\" menu", &unlock_cool_stuff_);
+            ImGui::Checkbox("Unlock all levels and ROMs", &unlock_all_);
 
             ImGui::Spacing();
             ImGui::TextDisabled("Changes take effect on next game restart.");
@@ -153,6 +155,7 @@ protected:
             if (ImGui::Button("OK", ImVec2(80, 0))) {
                 settings_->full_game = full_game_;
                 settings_->unlock_cool_stuff = unlock_cool_stuff_;
+                settings_->unlock_all = unlock_all_;
                 SaveSettings(settings_path_, *settings_);
                 Close();
                 if (on_done_) on_done_();
@@ -172,6 +175,7 @@ private:
     std::function<void()> on_done_;
     bool full_game_ = true;
     bool unlock_cool_stuff_ = true;
+    bool unlock_all_ = true;
 };
 
 // ============================================================================

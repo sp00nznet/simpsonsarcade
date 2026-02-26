@@ -2301,17 +2301,9 @@ PPC_FUNC(__imp__XamContentGetLicenseMask)
     ctx.r3.u32 = 0;
 }
 
-PPC_FUNC(__imp__XamContentCreateEnumerator)
-{
-    STUB_LOG("XamContentCreateEnumerator");
-    ctx.r3.u32 = 0x80070057;
-}
-
-PPC_FUNC(__imp__XamEnumerate)
-{
-    STUB_LOG("XamEnumerate");
-    ctx.r3.u32 = 0x80070057;
-}
+// XamContentCreateEnumerator and XamEnumerate — handled by SDK
+// (Previously overridden here with error stubs, which blocked the SDK's
+//  working implementation and prevented achievement enumeration.)
 
 PPC_FUNC(__imp__XamLoaderLaunchTitle)
 {
