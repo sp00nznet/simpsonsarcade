@@ -31,6 +31,8 @@ if(WIN32)
     add_executable(simpsons WIN32
         src/main.cpp
         src/stubs.cpp
+        src/simpsons_settings.cpp
+        src/simpsons_menu.cpp
         ${ENTRY_POINT_SRC}
         ${GENERATED_SOURCES}
     )
@@ -38,6 +40,8 @@ else()
     add_executable(simpsons
         src/main.cpp
         src/stubs.cpp
+        src/simpsons_settings.cpp
+        src/simpsons_menu.cpp
         ${ENTRY_POINT_SRC}
         ${GENERATED_SOURCES}
     )
