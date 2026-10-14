@@ -141,4 +141,7 @@ See [docs/speed-fix.md](docs/speed-fix.md) for full details and instructions for
 
 ## License
 
+The code in this repo is MIT: see [LICENSE](LICENSE). Code generated from the
+game (`generated/`) is made locally from your own copy and never committed.
+
 This project contains no copyrighted game assets. You must provide your own legally obtained copy of The Simpsons Arcade.
